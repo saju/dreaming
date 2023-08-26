@@ -64,9 +64,9 @@ void initialize_cartesian(graphics *g) {
   SDL_GetRendererOutputSize(g->render, &g->screen_w, &g->screen_h);
   
   g->top_left.x = -3.0;
-  g->top_left.y = 2.0;
+  g->top_left.y = 3.0 * g->screen_h/g->screen_w;
   g->bottom_right.x = 3.0;
-  g->bottom_right.y = -2.0;
+  g->bottom_right.y = -1 * g->top_left.y;
 
   g->X_scale = fabs((g->bottom_right.x - g->top_left.x)) / g->screen_w;
   g->Y_scale = fabs((g->bottom_right.y - g->top_left.y)) / g->screen_h;
@@ -149,10 +149,10 @@ void draw_zoom_selector(graphics *g, int x0, int y0, int x, int y) {
   selector.x = upscale_Sx_to_Px(g, x0);
   selector.y = upscale_Sy_to_Py(g, y0);
   selector.w = upscale_Sx_to_Px(g, x) - selector.x;
-  selector.h = upscale_Sy_to_Py(g, y) - selector.y;
+  selector.h = ceil(selector.w * (float)g->screen_h/(float)g->screen_w);
 
   SDL_RenderClear(g->render);
-  SDL_SetRenderDrawColor(g->render, 0x00, 0x00, 0xFF, 0xFF);
+  SDL_SetRenderDrawColor(g->render, 0xFF, 0x00, 0x00, 0xFF);
 
   SDL_Texture *texture = SDL_CreateTextureFromSurface(g->render, g->surface);
   SDL_RenderCopy(g->render, texture, NULL, NULL);
@@ -160,7 +160,7 @@ void draw_zoom_selector(graphics *g, int x0, int y0, int x, int y) {
   SDL_RenderDrawRect(g->render, &selector);
   SDL_RenderPresent(g->render);
 
-  SDL_WarpMouseInWindow(g->window, x, y);
+  SDL_WarpMouseInWindow(g->window, x, y0 + ceil(selector.h * g->window_h/g->screen_h));
 }
 
 void draw_mandelbrot2(graphics *g) {
