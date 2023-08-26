@@ -143,7 +143,25 @@ int naive_escape_time(complex c) {
   return iteration;
 }
 
+void draw_zoom_selector(graphics *g, int x0, int y0, int x, int y) {
+  SDL_Rect selector;
 
+  selector.x = upscale_Sx_to_Px(g, x0);
+  selector.y = upscale_Sy_to_Py(g, y0);
+  selector.w = upscale_Sx_to_Px(g, x) - selector.x;
+  selector.h = upscale_Sy_to_Py(g, y) - selector.y;
+
+  SDL_RenderClear(g->render);
+  SDL_SetRenderDrawColor(g->render, 0x00, 0x00, 0xFF, 0xFF);
+
+  SDL_Texture *texture = SDL_CreateTextureFromSurface(g->render, g->surface);
+  SDL_RenderCopy(g->render, texture, NULL, NULL);
+  SDL_DestroyTexture(texture);
+  SDL_RenderDrawRect(g->render, &selector);
+  SDL_RenderPresent(g->render);
+
+  SDL_WarpMouseInWindow(g->window, x, y);
+}
 
 void draw_mandelbrot2(graphics *g) {
   complex *z;
@@ -187,6 +205,7 @@ int main(void)
     graphics g;
     bool quit = false, must_redraw = false, zoom_session = false;
     int zoom_session_x0, zoom_session_y0, zoom_session_x1, zoom_session_y1;
+    unsigned long last_moved = 0;
 
 
     SDL_Init(SDL_INIT_EVERYTHING);
@@ -209,6 +228,7 @@ int main(void)
     dump_graphics(&g);
     draw_mandelbrot2(&g);
 
+    int debounce = 0;
     
     while(!quit) {
 	while(SDL_PollEvent(&e) != 0) {
@@ -225,24 +245,32 @@ int main(void)
 	  case SDL_MOUSEBUTTONUP:
 	    if (zoom_session) {
 	      zoom_session = false;
-	      zoom_session_x1 = e.button.x;
-	      zoom_session_y1 = e.button.y;
 	      printf("zoom area (%d, %d) - (%d, %d)\n", zoom_session_x0, zoom_session_y0,
 		     zoom_session_x1, zoom_session_y1);
 	      zoom(&g, zoom_session_x0, zoom_session_y0, zoom_session_x1, zoom_session_y1);
 	      must_redraw = true;
 	    }
 	    break;
+	  case SDL_MOUSEMOTION:
+	    last_moved = SDL_GetTicks64();
+	    zoom_session_x1 = e.button.x;
+	    zoom_session_y1 = e.button.y;
+	    break;
 	  default:
 	    break;
 	  }
 	}
 
+	if (zoom_session && ((SDL_GetTicks64() - last_moved) > 100)) {
+	    draw_zoom_selector(&g, zoom_session_x0, zoom_session_y0, zoom_session_x1, zoom_session_y1);
+	}
+	  
 	if (must_redraw) {
 	  draw_mandelbrot2(&g);
 	  dump_graphics(&g);
 	  must_redraw = false;
 	}
+	SDL_Delay(10);
     }
 
 
