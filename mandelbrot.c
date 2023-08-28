@@ -7,6 +7,7 @@
 
 #define ITERATION_THRESHOLD 800
 #define ZOOM_REDRAW_DELAY 100
+#define ZOOM_SAVE_SIZE 100
 
 #define GRAPHICS_LOOP_SLEEP 10
 
@@ -35,7 +36,22 @@ typedef struct {
   point_t screen;
   point_t cursor;
   unsigned long last_moved;
+
+  struct _state {
+    int current;
+    int max_levels;
+
+    struct _settings {
+      complex_t top_left;
+      double X_scale;
+      double Y_scale;
+    } *buffer;
+  } _st;
 } zoom_t;
+
+typedef struct {
+  bool cmd_pressed;
+} keyboard_t;
 
 typedef struct {
   /* the width & height of the screen. We use float to retain precision in various aspect ratio
@@ -71,9 +87,12 @@ typedef struct {
   double X_scale;
   double Y_scale;
 
+  /* state mgmt for zooming and zooming out */
+  zoom_t zoom;
 
+  keyboard_t keyboard;
   
-  /* machinery */
+  /* graphics machinery */
   SDL_Window *window;
   SDL_Renderer *render;
   SDL_Surface *surface;
@@ -86,17 +105,32 @@ void screen_to_complex_plain(graphics *g, point_t screen, complex_t *z) {
 }
     
 void dump_graphics(graphics *g) {
+  int i;
+  
   printf("screen width X height = %d X %d\n", (int)g->screen_w, (int)g->screen_h);
   printf("window width X height = %d X %d\n", (int)g->window_w, (int)g->window_h);
   printf("cartesian top_left = (%g, %g)\n", g->top_left.r, g->top_left.i);
   printf("X_scale = %g, Y_scale = %g\n", g->X_scale, g->Y_scale);
+
+  for (i = 0; i < g->zoom._st.current; i++) {
+    printf("zoom idx=%d top_left=(%g, %g), X_scale=%g, Y_scale=%g\n",
+	   i,
+	   g->zoom._st.buffer[i].top_left.r,
+	   g->zoom._st.buffer[i].top_left.i,
+	   g->zoom._st.buffer[i].X_scale,
+	   g->zoom._st.buffer[i].Y_scale);
+  }
+	 
   printf("=========================\n");
   
 }
 
 void destroy_graphics(graphics *g) {
+  free(g->zoom._st.buffer);
+  
   if (g->surface)
     SDL_FreeSurface(g->surface);
+
   SDL_DestroyRenderer(g->render);
   SDL_DestroyWindow(g->window);
   SDL_Quit();
@@ -125,6 +159,13 @@ void initialize_graphics(graphics *g) {
   g->Y_scale = fabs(g->top_left.i * 2) / g->screen_h;
 
   g->surface = SDL_CreateRGBSurface(0, g->screen_w, g->screen_h, 32, 0, 0, 0, 0);
+
+  memset(&g->zoom, 0, sizeof(zoom_t));
+  g->zoom._st.current = -1;
+  g->zoom._st.buffer = malloc(sizeof(struct _settings) * ZOOM_SAVE_SIZE);
+  g->zoom._st.max_levels = ZOOM_SAVE_SIZE;
+
+  g->keyboard.cmd_pressed = false;
 
   SDL_SetRenderDrawColor(g->render, 0, 0, 0, 255);
 }
@@ -180,41 +221,42 @@ void draw_mandelbrot(graphics *g) {
   SDL_RenderPresent(g->render);
 }
 
-void zoom_selection_begin(graphics *g, zoom_t *zoom, int window_x, int window_y) {
-  zoom->busy = true;
-  zoom->screen.x = WINDOW_X_TO_SCREEN_X(g, window_x);
-  zoom->screen.y = WINDOW_Y_TO_SCREEN_Y(g, window_y);
-  zoom->cursor.x = zoom->screen.x;
-  zoom->cursor.y = zoom->screen.y;
+void zoom_selection_begin(graphics *g, int window_x, int window_y) {
+  g->zoom.busy = true;
+  g->zoom.screen.x = WINDOW_X_TO_SCREEN_X(g, window_x);
+  g->zoom.screen.y = WINDOW_Y_TO_SCREEN_Y(g, window_y);
+  g->zoom.cursor.x = g->zoom.screen.x;
+  g->zoom.cursor.y = g->zoom.screen.y;
 }
 
-void zoom_cursor_move(graphics *g, zoom_t *zoom, int window_x, int window_y) {
-  zoom->last_moved = SDL_GetTicks64();
-  zoom->cursor.x = WINDOW_X_TO_SCREEN_X(g, window_x);
-  zoom->cursor.y = WINDOW_Y_TO_SCREEN_Y(g, window_y);
+void zoom_cursor_move(graphics *g, int window_x, int window_y) {
+  if (!g->zoom.busy)
+    return;
+  g->zoom.last_moved = SDL_GetTicks64();
+  g->zoom.cursor.x = WINDOW_X_TO_SCREEN_X(g, window_x);
+  g->zoom.cursor.y = WINDOW_Y_TO_SCREEN_Y(g, window_y);
 }
 
-void zoom_draw_selection(graphics *g, zoom_t *zoom) {
+void zoom_draw_selection(graphics *g) {
   SDL_Rect selector;
   SDL_Texture *texture;
   
-  if (!zoom->busy)
+  if (!g->zoom.busy)
     return;
 
   /* debounce a bit */
-  if ((SDL_GetTicks64() - zoom->last_moved) < ZOOM_REDRAW_DELAY)
+  if ((SDL_GetTicks64() - g->zoom.last_moved) < ZOOM_REDRAW_DELAY)
     return;
 
   /* force aspect ratio on the user's selection. We fix height of selection rectangle to fit the
    * screen aspect ratio
    */
-  selector.x = zoom->screen.x;
-  selector.y = zoom->screen.y;
-  selector.w = zoom->cursor.x - zoom->screen.x;
+  selector.x = g->zoom.screen.x;
+  selector.y = g->zoom.screen.y;
+  selector.w = g->zoom.cursor.x - g->zoom.screen.x;
   selector.h = ceil(selector.w * SCREEN_ASPECT_RATIO(g));
-  zoom->cursor.y = zoom->screen.y + selector.h;
+  g->zoom.cursor.y = g->zoom.screen.y + selector.h;
 
-  // printf("screen=(%f, %f), cursor=(%f, %f), w=%d, h=%d\n", zoom->screen.x, zoom->screen.y, zoom->cursor.x, zoom->cursor.y, selector.w, selector.h);
 
   SDL_RenderClear(g->render);
 
@@ -234,28 +276,72 @@ void zoom_draw_selection(graphics *g, zoom_t *zoom) {
   /* finally jump to the bottom right of the just rendered zoom selection rectangle. This will be
    * the X value of current cursor, but the aspect ratio corrected value on the Y axis
    */
-  SDL_WarpMouseInWindow(g->window, SCREEN_X_TO_WINDOW_X(g, zoom->cursor.x),
-			SCREEN_Y_TO_WINDOW_Y(g, zoom->cursor.y));
+  SDL_WarpMouseInWindow(g->window, SCREEN_X_TO_WINDOW_X(g, g->zoom.cursor.x),
+			SCREEN_Y_TO_WINDOW_Y(g, g->zoom.cursor.y));
 }
 
-void rescale_screen(graphics *g, zoom_t *zoom) {
+void zoom_in(graphics *g) {
   complex_t top_left, cursor;
 
-  screen_to_complex_plain(g, zoom->screen, &top_left);
-  screen_to_complex_plain(g, zoom->cursor, &cursor);
+  if (g->zoom._st.current + 1 == g->zoom._st.max_levels) {
+    g->zoom._st.max_levels += ZOOM_SAVE_SIZE;
+    g->zoom._st.buffer = realloc(g->zoom._st.buffer, sizeof(struct _settings) * (g->zoom._st.max_levels));
+  }
+
+  g->zoom._st.current++;
+
+  g->zoom._st.buffer[g->zoom._st.current].top_left = g->top_left;
+  g->zoom._st.buffer[g->zoom._st.current].X_scale = g->X_scale;
+  g->zoom._st.buffer[g->zoom._st.current].Y_scale = g->Y_scale;
+  
+  screen_to_complex_plain(g, g->zoom.screen, &top_left);
+  screen_to_complex_plain(g, g->zoom.cursor, &cursor);
   g->top_left.r = top_left.r;
   g->top_left.i = top_left.i;
-
+  
   g->X_scale = fabs(cursor.r - top_left.r) / g->screen_w;
   g->Y_scale = fabs(cursor.i - top_left.i) / g->screen_h;
+
+  g->zoom.busy = false;
+}
+
+void zoom_out(graphics *g) {
+  if (g->zoom._st.current == -1)
+    return;
+
+  g->top_left = g->zoom._st.buffer[g->zoom._st.current].top_left;
+  g->X_scale = g->zoom._st.buffer[g->zoom._st.current].X_scale;
+  g->Y_scale = g->zoom._st.buffer[g->zoom._st.current].Y_scale;
+  
+  g->zoom._st.current--;
+}
+
+
+bool keyboard_process(graphics *g, Uint32 event_type, Uint8 scancode) {
+  int undo_pressed = false;
+
+  if (event_type == SDL_KEYDOWN) {
+    if ((scancode == SDL_SCANCODE_LGUI) || (scancode == SDL_SCANCODE_RGUI)) 
+      g->keyboard.cmd_pressed = true;
+    else if ((scancode == SDL_SCANCODE_Z) && g->keyboard.cmd_pressed)
+      undo_pressed = true;
+    else
+      undo_pressed = false;
+  }
+
+  if (event_type == SDL_KEYUP) {
+    if ((scancode == SDL_SCANCODE_LGUI) || (scancode == SDL_SCANCODE_RGUI))
+      g->keyboard.cmd_pressed = false;
+  }
+
+  return undo_pressed;
 }
 
 int main(void) {
   bool quit = false, must_redraw = false;
   graphics g;
   SDL_Event e;
-  zoom_t zoom;
-  
+
   if (SDL_Init(SDL_INIT_VIDEO) != 0) {
     printf("Failed to init video: %s\n", SDL_GetError());
   }
@@ -274,19 +360,27 @@ int main(void) {
 	break;
 
       case SDL_MOUSEBUTTONDOWN:
-	zoom_selection_begin(&g, &zoom, e.button.x, e.button.y);
+	zoom_selection_begin(&g, e.button.x, e.button.y);
 	break;
 
       case SDL_MOUSEMOTION:
-	if (zoom.busy)
-	  zoom_cursor_move(&g, &zoom, e.button.x, e.button.y);
+	zoom_cursor_move(&g, e.button.x, e.button.y);
 	break;
 
       case SDL_MOUSEBUTTONUP:
-	zoom.busy = false;
-	rescale_screen(&g, &zoom);
+	zoom_in(&g);
 	must_redraw = true;
+	break;
 
+      case SDL_KEYDOWN:
+	if (keyboard_process(&g, SDL_KEYDOWN, e.key.keysym.scancode) == true) {
+	  zoom_out(&g);
+	  must_redraw = true;
+	}
+	break;
+
+      case SDL_KEYUP:
+	keyboard_process(&g, SDL_KEYUP, e.key.keysym.scancode);
 	break;
 	
       default:
@@ -294,7 +388,7 @@ int main(void) {
       }
     }
 
-    zoom_draw_selection(&g, &zoom);
+    zoom_draw_selection(&g);
 
     if (must_redraw) {
       must_redraw = false;
