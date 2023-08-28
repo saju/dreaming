@@ -3,7 +3,7 @@ A recursive Mandelbrot fractal generator for Macbooks in C using SDL for graphic
 Currently:
 * Basic "zoom in" available by selecting a area using the touchpad ( but no "zoom out" available).
 * "Zoom In" preserves aspect ratio.
-* Only grayscale images for now. Colours coming soon.
+* Simple 16 color palette. No smoothing, lots of ugly banding.
 * Uses naive escape time calculations (will eat CPU)
 * Depends on platform resolution of float/double. "Infinite precision" to come later.
 
