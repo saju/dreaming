@@ -21,6 +21,30 @@
 #define SCREEN_X_TO_WINDOW_X(g, sx) ((sx) * g->window_w/g->screen_w)
 #define SCREEN_Y_TO_WINDOW_Y(g, sy) ((sy) * g->window_h/g->screen_h)
 
+/* naive color palette, used by naive_select_color() */
+struct _rgb {
+  Uint8 red;
+  Uint8 green;
+  Uint8 blue;
+};
+
+struct _rgb naive_colors[16] = {{66, 30, 15},
+			       {25, 7, 26},
+			       {9, 1, 47},
+			       {4, 4, 73},
+			       {0, 7, 100},
+			       {12, 44, 138},
+			       {24, 82, 177},
+			       {57, 125, 209},
+			       {134, 181, 229},
+			       {211, 236, 248},
+			       {241, 233, 191},
+			       {248, 201, 95},
+			       {255, 170, 0},
+			       {204, 128, 0},
+			       {153, 87, 0},
+			       {106, 52, 3}};
+
 typedef struct {
   double x;
   double y;
@@ -188,6 +212,14 @@ int naive_escape_time(complex_t c) {
   return iteration;
 }
 
+
+
+
+Uint32 naive_select_color(graphics *g, int iteration) {
+  struct _rgb color = naive_colors[iteration % 16];
+  return SDL_MapRGB(g->surface->format, color.red, color.green, color.blue);
+}
+
 void draw_mandelbrot(graphics *g) {
   Uint32 *pixels;
   int Px, Py, pos, iterations;
@@ -207,10 +239,7 @@ void draw_mandelbrot(graphics *g) {
 
       iterations = naive_escape_time(z);
 
-      if (iterations >= ITERATION_THRESHOLD)
-	pixels[pos] = SDL_MapRGB(g->surface->format, 255, 255, 255);
-      else
-	pixels[pos] = SDL_MapRGB(g->surface->format, 0, 0, 0);
+      pixels[pos] = naive_select_color(g, iterations);
     }
   }
 
