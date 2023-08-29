@@ -1,11 +1,10 @@
-#include <stdlib.h>
 #include <stdbool.h>
 #include <SDL2/SDL.h>
+#include "dreaming.h"
 
 #define WIN_WIDTH  1000
 #define WIN_HEIGHT 700
 
-#define ITERATION_THRESHOLD 800
 #define ZOOM_REDRAW_DELAY 100
 #define ZOOM_SAVE_SIZE 100
 
@@ -21,29 +20,7 @@
 #define SCREEN_X_TO_WINDOW_X(g, sx) ((sx) * g->window_w/g->screen_w)
 #define SCREEN_Y_TO_WINDOW_Y(g, sy) ((sy) * g->window_h/g->screen_h)
 
-/* naive color palette, used by naive_select_color() */
-struct _rgb {
-  Uint8 red;
-  Uint8 green;
-  Uint8 blue;
-};
-
-struct _rgb naive_colors[16] = {{66, 30, 15},
-			       {25, 7, 26},
-			       {9, 1, 47},
-			       {4, 4, 73},
-			       {0, 7, 100},
-			       {12, 44, 138},
-			       {24, 82, 177},
-			       {57, 125, 209},
-			       {134, 181, 229},
-			       {211, 236, 248},
-			       {241, 233, 191},
-			       {248, 201, 95},
-			       {255, 170, 0},
-			       {204, 128, 0},
-			       {153, 87, 0},
-			       {106, 52, 3}};
+struct _rgb *RGB_colormap, *RGB_grayscale;
 
 typedef struct {
   double x;
@@ -123,7 +100,7 @@ typedef struct {
 } graphics;
 
 
-void screen_to_complex_plain(graphics *g, point_t screen, complex_t *z) {
+void screen_to_complex_plane(graphics *g, point_t screen, complex_t *z) {
   z->r = g->top_left.r + (screen.x * g->X_scale);
   z->i = g->top_left.i - (screen.y * g->Y_scale);
 }
@@ -146,7 +123,6 @@ void dump_graphics(graphics *g) {
   }
 	 
   printf("=========================\n");
-  
 }
 
 void destroy_graphics(graphics *g) {
@@ -192,11 +168,14 @@ void initialize_graphics(graphics *g) {
   g->keyboard.cmd_pressed = false;
 
   SDL_SetRenderDrawColor(g->render, 0, 0, 0, 255);
+
+  RGB_colormap = build_RGB_colormap_reverse();
+  RGB_grayscale = build_RGB_grayscale();
 }
 
 
 int naive_escape_time(complex_t c) {
-  complex_t tmp;
+  complex_t tmp = {0.0, 0.0};
   int iteration = 0;
 
   tmp.r = 0;
@@ -208,17 +187,60 @@ int naive_escape_time(complex_t c) {
     tmp.r = t;
     iteration++;
   }
-
   return iteration;
 }
 
+float normalized_escape_time(complex_t c) {
+  complex_t tmp = {0.0, 0.0};
+  int iteration = 0;
+  float mu = 0.0;
+
+  tmp.r = 0;
+  tmp.i = 0;
+  
+  while (((tmp.r * tmp.r + tmp.i * tmp.i) <= 4) && iteration < ITERATION_THRESHOLD) {
+    double t = tmp.r * tmp.r - tmp.i * tmp.i + c.r;
+    tmp.i = 2 * tmp.r * tmp.i + c.i;
+    tmp.r = t;
+    iteration++;
+  }
+
+  if (iteration < ITERATION_THRESHOLD) {
+    mu = iteration + 1 - log(log(sqrt(tmp.r*tmp.r + tmp.i*tmp.i))/log(2.0)) / log(2.0);
+    return mu/ITERATION_THRESHOLD;
+  }
+  return 1.0;
+}
 
 
+Uint32 monochrome_select_color(graphics *g, int iteration) {
+  if (iteration >= ITERATION_THRESHOLD)
+    return SDL_MapRGB(g->surface->format, 0xff, 0xff, 0xff);
+  else
+    return SDL_MapRGB(g->surface->format, 0x00, 0x00, 0x00);
+}
+
+Uint32 grayscale_select_color(graphics *g, int iteration) {
+  struct _rgb color = RGB_grayscale[iteration];
+  return SDL_MapRGB(g->surface->format, color.r, color.g, color.b);
+}
 
 Uint32 naive_select_color(graphics *g, int iteration) {
-  struct _rgb color = naive_colors[iteration % 16];
-  return SDL_MapRGB(g->surface->format, color.red, color.green, color.blue);
+  struct _rgb *palette = naive_rgb_palette();
+  struct _rgb color = palette[iteration];
+  return SDL_MapRGB(g->surface->format, color.r, color.g, color.b);
 }
+
+Uint32 rgb_colormap_select_color(graphics *g, int iteration) {
+  int scale_iter = iteration;
+  struct _rgb color = RGB_colormap[scale_iter];
+  return SDL_MapRGB(g->surface->format, color.r, color.g, color.b);
+}
+
+
+float hue[2000][1400] = {0};
+int pixel_iterations[2000][1400] = {0};
+int iterations_histogram[ITERATION_THRESHOLD] = {0};
 
 void draw_mandelbrot(graphics *g) {
   Uint32 *pixels;
@@ -227,6 +249,7 @@ void draw_mandelbrot(graphics *g) {
   point_t P;
   SDL_Texture *texture;
 
+  
   pixels = g->surface->pixels;
 
   for (Py = 0; Py < g->screen_h; Py++) {
@@ -235,10 +258,8 @@ void draw_mandelbrot(graphics *g) {
       P.y = Py;
 
       pos = SCREEN_TO_PIXEL(g, P);
-      screen_to_complex_plain(g, P, &z);
-
+      screen_to_complex_plane(g, P, &z);
       iterations = naive_escape_time(z);
-
       pixels[pos] = naive_select_color(g, iterations);
     }
   }
@@ -249,6 +270,91 @@ void draw_mandelbrot(graphics *g) {
   SDL_DestroyTexture(texture);
   SDL_RenderPresent(g->render);
 }
+
+void draw_mandelbrot_with_histogram(graphics *g) {
+  Uint32 *pixels;
+  int Px, Py, pos, iterations;
+  complex_t z;
+  point_t P;
+  SDL_Texture *texture;
+  long total = 0;
+
+  memset(hue, 0, 2000*1400*sizeof(float));
+  memset(pixel_iterations, 0, 2000*1400*sizeof(int));
+  memset(iterations_histogram, 0, ITERATION_THRESHOLD*sizeof(int));
+  
+  pixels = g->surface->pixels;
+
+  for (Py = 0; Py < g->screen_h; Py++) {
+    for (Px = 0; Px < g->screen_w; Px++) {
+      P.x = Px;
+      P.y = Py;
+
+      pos = SCREEN_TO_PIXEL(g, P);
+      screen_to_complex_plane(g, P, &z);
+      iterations = naive_escape_time(z);
+      pixel_iterations[Px][Py] = iterations;
+      iterations_histogram[iterations]++;
+    }
+  }
+
+  for (int i = 0; i < ITERATION_THRESHOLD; i++) {
+    total += iterations_histogram[i];
+  }
+
+  for (Py = 0; Py < g->screen_h; Py++) {
+    for (Px = 0; Px < g->screen_w; Px++) {
+      iterations = pixel_iterations[Px][Py];
+      for (int i = 0; i <= iterations; i++) {
+	hue[Px][Py] += (float)iterations_histogram[i] / total;
+      }
+      P.x = Px;
+      P.y = Py;
+      pos = SCREEN_TO_PIXEL(g, P);
+      pixels[pos] = naive_select_color(g, hue[Px][Py]*1000000);
+    }
+  }
+
+  texture = SDL_CreateTextureFromSurface(g->render, g->surface);
+  SDL_RenderClear(g->render);
+  SDL_RenderCopy(g->render, texture, NULL, NULL);
+  SDL_DestroyTexture(texture);
+  SDL_RenderPresent(g->render);
+}
+
+void draw_mandelbrot_with_normalized_iteration(graphics *g) {
+  Uint32 *pixels;
+  int Px, Py, pos;
+  point_t P;
+  complex_t z;
+  float  mu;
+  SDL_Texture *texture;
+
+  pixels = g->surface->pixels;
+
+  for (Py = 0; Py < g->screen_h; Py++) {
+    for (Px = 0; Px < g->screen_w; Px++) {
+      P.x = Px;
+      P.y = Py;
+      
+      screen_to_complex_plane(g, P, &z);
+      mu = normalized_escape_time(z);
+
+      pos = SCREEN_TO_PIXEL(g, P);
+      //pixels[pos] = rgb_colormap_select_color(g, mu * 6 * 256);
+      pixels[pos] = naive_select_color(g, mu * 17);
+      //pixels[pos] = grayscale_select_color(g, mu * 256);
+      //printf("%g\n", mu);
+    }
+  }
+
+  texture = SDL_CreateTextureFromSurface(g->render, g->surface);
+  SDL_RenderClear(g->render);
+  SDL_RenderCopy(g->render, texture, NULL, NULL);
+  SDL_DestroyTexture(texture);
+  SDL_RenderPresent(g->render);
+  
+ }
 
 void zoom_selection_begin(graphics *g, int window_x, int window_y) {
   g->zoom.busy = true;
@@ -323,8 +429,8 @@ void zoom_in(graphics *g) {
   g->zoom._st.buffer[g->zoom._st.current].X_scale = g->X_scale;
   g->zoom._st.buffer[g->zoom._st.current].Y_scale = g->Y_scale;
   
-  screen_to_complex_plain(g, g->zoom.screen, &top_left);
-  screen_to_complex_plain(g, g->zoom.cursor, &cursor);
+  screen_to_complex_plane(g, g->zoom.screen, &top_left);
+  screen_to_complex_plane(g, g->zoom.cursor, &cursor);
   g->top_left.r = top_left.r;
   g->top_left.i = top_left.i;
   
@@ -378,7 +484,7 @@ int main(void) {
   initialize_graphics(&g);
   dump_graphics(&g);
 
-  draw_mandelbrot(&g);
+  draw_mandelbrot_with_normalized_iteration(&g);
 
   while (!quit) {
     while(SDL_PollEvent(&e) != 0) {
@@ -421,7 +527,7 @@ int main(void) {
 
     if (must_redraw) {
       must_redraw = false;
-      draw_mandelbrot(&g);
+      draw_mandelbrot_with_normalized_iteration(&g);
       dump_graphics(&g);
     }
       
