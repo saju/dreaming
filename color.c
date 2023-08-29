@@ -1,31 +1,38 @@
 #include "dreaming.h"
 
+/*
+ * Note to self: more color spaces to explore below:
+ *
+ * http://bids.github.io/colormap/
+ * HSV space
+ * HLV space
+ * CIECAM02 space
+ * http://warp.povusers.org/Mandelbrot/
+ */
 
-struct _rgb naive_colors[17] = {{00, 00, 00},
-				{66, 30, 15},
-				{25, 7, 26},
-				{9, 1, 47},
-				{4, 4, 73},
-				{0, 7, 100},
-				{12, 44, 138},
-				{24, 82, 177},
-				{57, 125, 209},
-				{134, 181, 229},
-				{211, 236, 248},
-				{241, 233, 191},
-				{248, 201, 95},
-				{255, 170, 0},
-				{204, 128, 0},
-				{153, 87, 0},
-				{106, 52, 3}};
-//{1, 1, 1},
-//				{10, 10, 10},
-//				{20, 20, 20}};
 
-inline struct _rgb *naive_rgb_palette() {
-  return naive_colors;
+struct _rgb uf_colors[16] = {{66, 30, 15},
+			     {25, 7, 26},
+			     {9, 1, 47},
+			     {4, 4, 73},
+			     {0, 7, 100},
+			     {12, 44, 138},
+			     {24, 82, 177},
+			     {57, 125, 209},
+			     {134, 181, 229},
+			     {211, 236, 248},
+			     {241, 233, 191},
+			     {248, 201, 95},
+			     {255, 170, 0},
+			     {204, 128, 0},
+			     {153, 87, 0},
+			     {106, 52, 3}};
+
+palette_t ultra_fractal = {16, uf_colors};
+
+inline palette_t *uf_rgb_palette() {
+  return &ultra_fractal;
 }
-
 
 
 /*
@@ -165,15 +172,18 @@ struct _rgb *build_RGB_colormap_reverse() {
  *
  * R = G = B is "shades of gray" in RGB colorspace
  */
-struct _rgb *build_RGB_grayscale() {
+palette_t *grayscale_RGB_palette() {
   int i;
-  struct _rgb *rgb_map = malloc(sizeof(struct _rgb) * 256);
+  palette_t *p = malloc(sizeof(*p));
+
+  p->size = 256;
+  p->colors = malloc(sizeof(struct _rgb) * 256);
 
   for (i = 0; i < 256; i++) {
-    rgb_map[i].r = i;
-    rgb_map[i].g = i;
-    rgb_map[i].b = i;
+    p->colors[i].r = i;
+    p->colors[i].g = i;
+    p->colors[i].b = i;
   }
 
-  return rgb_map;
+  return p;
 }

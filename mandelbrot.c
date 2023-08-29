@@ -20,7 +20,7 @@
 #define SCREEN_X_TO_WINDOW_X(g, sx) ((sx) * g->window_w/g->screen_w)
 #define SCREEN_Y_TO_WINDOW_Y(g, sy) ((sy) * g->window_h/g->screen_h)
 
-struct _rgb *RGB_colormap, *RGB_grayscale;
+palette_t *uf_palette, *RGB_grayscale_palette;
 
 typedef struct {
   double x;
@@ -169,27 +169,47 @@ void initialize_graphics(graphics *g) {
 
   SDL_SetRenderDrawColor(g->render, 0, 0, 0, 255);
 
-  RGB_colormap = build_RGB_colormap_reverse();
-  RGB_grayscale = build_RGB_grayscale();
+  /* XXX: free these */
+  RGB_grayscale_palette = grayscale_RGB_palette();
+  uf_palette = uf_rgb_palette();
 }
 
 
-int naive_escape_time(complex_t c) {
-  complex_t tmp = {0.0, 0.0};
-  int iteration = 0;
+Uint32 monochrome_select_color(graphics *g, int iteration) {
+  if (iteration >= ITERATION_THRESHOLD)
+    return SDL_MapRGB(g->surface->format, 0xff, 0xff, 0xff);
+  else
+    return SDL_MapRGB(g->surface->format, 0x00, 0x00, 0x00);
+}
 
-  tmp.r = 0;
-  tmp.i = 0;
-  
-  while (((tmp.r * tmp.r + tmp.i * tmp.i) <= 4) && iteration < ITERATION_THRESHOLD) {
-    double t = tmp.r * tmp.r - tmp.i * tmp.i + c.r;
-    tmp.i = 2 * tmp.r * tmp.i + c.i;
-    tmp.r = t;
-    iteration++;
+Uint32 uf_select_color(graphics *g, float iteration){
+  struct _rgb color;
+
+  if (iteration == 1.0) {
+    return SDL_MapRGB(g->surface->format, 0x00, 0x00, 0x00); 
+  } else {
+    color = uf_palette->colors[(int)(iteration * uf_palette->size)];
+    return SDL_MapRGB(g->surface->format, color.r, color.g, color.b);
   }
-  return iteration;
 }
 
+Uint32 grayscale_select_color(graphics *g, float iteration) {
+  struct _rgb color = RGB_grayscale_palette->colors[(int)(iteration * RGB_grayscale_palette->size)];
+  return SDL_MapRGB(g->surface->format, color.r, color.g, color.b);
+}
+
+/*
+ * For f(z) = z^2 + c with z & c defined in the complex plain, compute if the sequence
+ * f(f(f....(f(0))...)) diverges to infinity. If |z| > 2, the series will definitely
+ * escape to infinity. A `c` for which the sequence does not diverge after ITERATION_THRESHOLD
+ * applications is considered as "not diverging" and is part of the mandebrot set.
+ *
+ * Iteration count to escape (or threshold) for `c` determines the color of the corresponding
+ * pixel on screen.
+ *
+ * We normalize the iteration count for obtaining smooth color transition.
+ * Theory and details from: http://linas.org/art-gallery/escape/smooth.html
+ */
 float normalized_escape_time(complex_t c) {
   complex_t tmp = {0.0, 0.0};
   int iteration = 0;
@@ -208,121 +228,12 @@ float normalized_escape_time(complex_t c) {
   if (iteration < ITERATION_THRESHOLD) {
     mu = iteration + 1 - log(log(sqrt(tmp.r*tmp.r + tmp.i*tmp.i))/log(2.0)) / log(2.0);
     return mu/ITERATION_THRESHOLD;
-  }
-  return 1.0;
+  } else 
+    return 1.0;
 }
 
-
-Uint32 monochrome_select_color(graphics *g, int iteration) {
-  if (iteration >= ITERATION_THRESHOLD)
-    return SDL_MapRGB(g->surface->format, 0xff, 0xff, 0xff);
-  else
-    return SDL_MapRGB(g->surface->format, 0x00, 0x00, 0x00);
-}
-
-Uint32 grayscale_select_color(graphics *g, int iteration) {
-  struct _rgb color = RGB_grayscale[iteration];
-  return SDL_MapRGB(g->surface->format, color.r, color.g, color.b);
-}
-
-Uint32 naive_select_color(graphics *g, int iteration) {
-  struct _rgb *palette = naive_rgb_palette();
-  struct _rgb color = palette[iteration];
-  return SDL_MapRGB(g->surface->format, color.r, color.g, color.b);
-}
-
-Uint32 rgb_colormap_select_color(graphics *g, int iteration) {
-  int scale_iter = iteration;
-  struct _rgb color = RGB_colormap[scale_iter];
-  return SDL_MapRGB(g->surface->format, color.r, color.g, color.b);
-}
-
-
-float hue[2000][1400] = {0};
-int pixel_iterations[2000][1400] = {0};
-int iterations_histogram[ITERATION_THRESHOLD] = {0};
 
 void draw_mandelbrot(graphics *g) {
-  Uint32 *pixels;
-  int Px, Py, pos, iterations;
-  complex_t z;
-  point_t P;
-  SDL_Texture *texture;
-
-  
-  pixels = g->surface->pixels;
-
-  for (Py = 0; Py < g->screen_h; Py++) {
-    for (Px = 0; Px < g->screen_w; Px++) {
-      P.x = Px;
-      P.y = Py;
-
-      pos = SCREEN_TO_PIXEL(g, P);
-      screen_to_complex_plane(g, P, &z);
-      iterations = naive_escape_time(z);
-      pixels[pos] = naive_select_color(g, iterations);
-    }
-  }
-
-  texture = SDL_CreateTextureFromSurface(g->render, g->surface);
-  SDL_RenderClear(g->render);
-  SDL_RenderCopy(g->render, texture, NULL, NULL);
-  SDL_DestroyTexture(texture);
-  SDL_RenderPresent(g->render);
-}
-
-void draw_mandelbrot_with_histogram(graphics *g) {
-  Uint32 *pixels;
-  int Px, Py, pos, iterations;
-  complex_t z;
-  point_t P;
-  SDL_Texture *texture;
-  long total = 0;
-
-  memset(hue, 0, 2000*1400*sizeof(float));
-  memset(pixel_iterations, 0, 2000*1400*sizeof(int));
-  memset(iterations_histogram, 0, ITERATION_THRESHOLD*sizeof(int));
-  
-  pixels = g->surface->pixels;
-
-  for (Py = 0; Py < g->screen_h; Py++) {
-    for (Px = 0; Px < g->screen_w; Px++) {
-      P.x = Px;
-      P.y = Py;
-
-      pos = SCREEN_TO_PIXEL(g, P);
-      screen_to_complex_plane(g, P, &z);
-      iterations = naive_escape_time(z);
-      pixel_iterations[Px][Py] = iterations;
-      iterations_histogram[iterations]++;
-    }
-  }
-
-  for (int i = 0; i < ITERATION_THRESHOLD; i++) {
-    total += iterations_histogram[i];
-  }
-
-  for (Py = 0; Py < g->screen_h; Py++) {
-    for (Px = 0; Px < g->screen_w; Px++) {
-      iterations = pixel_iterations[Px][Py];
-      for (int i = 0; i <= iterations; i++) {
-	hue[Px][Py] += (float)iterations_histogram[i] / total;
-      }
-      P.x = Px;
-      P.y = Py;
-      pos = SCREEN_TO_PIXEL(g, P);
-      pixels[pos] = naive_select_color(g, hue[Px][Py]*1000000);
-    }
-  }
-
-  texture = SDL_CreateTextureFromSurface(g->render, g->surface);
-  SDL_RenderClear(g->render);
-  SDL_RenderCopy(g->render, texture, NULL, NULL);
-  SDL_DestroyTexture(texture);
-  SDL_RenderPresent(g->render);
-}
-
-void draw_mandelbrot_with_normalized_iteration(graphics *g) {
   Uint32 *pixels;
   int Px, Py, pos;
   point_t P;
@@ -341,10 +252,7 @@ void draw_mandelbrot_with_normalized_iteration(graphics *g) {
       mu = normalized_escape_time(z);
 
       pos = SCREEN_TO_PIXEL(g, P);
-      //pixels[pos] = rgb_colormap_select_color(g, mu * 6 * 256);
-      pixels[pos] = naive_select_color(g, mu * 17);
-      //pixels[pos] = grayscale_select_color(g, mu * 256);
-      //printf("%g\n", mu);
+      pixels[pos] = uf_select_color(g, mu);
     }
   }
 
@@ -396,7 +304,7 @@ void zoom_draw_selection(graphics *g) {
   SDL_RenderClear(g->render);
 
 
-  /* this is key, we copy over the base surface (backed by g->surface->pixels) without any
+  /* this is key; we copy over the base surface (backed by g->surface->pixels) without any
    * zoom rectangles from previous zoom_draw_selection() invocations into GPU memory and directly
    * write our new rectangle there and render everything to screen.
    */
@@ -484,7 +392,7 @@ int main(void) {
   initialize_graphics(&g);
   dump_graphics(&g);
 
-  draw_mandelbrot_with_normalized_iteration(&g);
+  draw_mandelbrot(&g);
 
   while (!quit) {
     while(SDL_PollEvent(&e) != 0) {
@@ -527,7 +435,7 @@ int main(void) {
 
     if (must_redraw) {
       must_redraw = false;
-      draw_mandelbrot_with_normalized_iteration(&g);
+      draw_mandelbrot(&g);
       dump_graphics(&g);
     }
       
