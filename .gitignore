@@ -1,0 +1,4 @@
+mandelbrot
+*.o
+*~
+.DS_Store
