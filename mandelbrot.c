@@ -211,30 +211,22 @@ Uint32 grayscale_select_color(graphics *g, float iteration) {
  * Theory and details from: http://linas.org/art-gallery/escape/smooth.html
  */
 float normalized_escape_time(complex_t c) {
-  complex_t tmp = {0.0, 0.0};
   int iteration = 0;
   float mu = 0.0;
-  double re, im;
+  double r0 = c.r, i0 = c.i;
+  double r = 0, i = 0, r2 = 0, i2 = 0;
 
-  tmp.r = 0;
-  tmp.i = 0;
-
- #pragma clang loop vectorize(enable)
-  for (iteration = 0; iteration < ITERATION_THRESHOLD; iteration++) {
-    re = tmp.r * tmp.r;
-    im = tmp.i * tmp.i;
-
-    if (re + im > 4)
-      goto normalize;
-
-    double z = re - im + c.r;
-    tmp.i = (tmp.r + tmp.r) * tmp.i + c.i;
-    tmp.r = z;
+#pragma clang loop vectorize(enable)
+  while (r2 + i2 <= 4 && iteration < ITERATION_THRESHOLD) {
+    i = (r + r) * i + i0;
+    r = r2 - i2 + r0;
+    r2 = r * r;
+    i2 = i * i;
+    iteration++;
   }
-
- normalize:
+  
   if (iteration < ITERATION_THRESHOLD) {
-    mu = iteration + 1 - log(log(sqrt(re + im))/log(2.0)) / log(2.0);
+    mu = iteration + 1 - log(log(sqrt(r2 + i2))/log(2.0)) / log(2.0);
     return mu/ITERATION_THRESHOLD;
   } else 
     return 1.0;
