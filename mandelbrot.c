@@ -219,6 +219,7 @@ float normalized_escape_time(complex_t c) {
   tmp.r = 0;
   tmp.i = 0;
 
+ #pragma clang loop vectorize(enable)
   for (iteration = 0; iteration < ITERATION_THRESHOLD; iteration++) {
     re = tmp.r * tmp.r;
     im = tmp.i * tmp.i;
@@ -253,6 +254,10 @@ void draw_mandelbrot(graphics *g) {
 
   pixels = g->surface->pixels;
 
+  printf("computation started for (%g, %g) X_scale(%g), Y_scale(%g)\n",
+	 g->top_left.r, g->top_left.i, g->X_scale, g->Y_scale);
+
+#pragma clang loop vectorize(enable)
   for (Py = 0; Py < g->screen_h; Py++) {
     for (Px = 0; Px < g->screen_w; Px++) {
       P.x = Px;
@@ -266,6 +271,7 @@ void draw_mandelbrot(graphics *g) {
     }
   }
   printf("computations took %" PRIu64 "ms\n", SDL_GetTicks64() - then);
+  
   texture = SDL_CreateTextureFromSurface(g->render, g->surface);
   SDL_RenderClear(g->render);
   SDL_RenderCopy(g->render, texture, NULL, NULL);
@@ -409,7 +415,7 @@ int main(void) {
       switch (e.type) {
 
       case SDL_QUIT:
-	quit = true;
+	goto byebye;
 	break;
 
       case SDL_MOUSEBUTTONDOWN:
@@ -451,7 +457,8 @@ int main(void) {
       
     SDL_Delay(10);
   }
-  
+
+ byebye:
   destroy_graphics(&g);
   return 0;
 }
