@@ -11,6 +11,7 @@ Currently:
 INSTALL:
 * You need a c99 C complier. You can get clang from Xcode Command Line Tools.
 * You need make (or you can copy the build line from the makefile)
+* You will need SDL2, "brew install sdl2" will do the job
 * git clone this repo; cd into_repo; make; ./a.out
 
 Some sample fractal images rendered by this generator:

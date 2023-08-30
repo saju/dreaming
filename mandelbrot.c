@@ -214,19 +214,26 @@ float normalized_escape_time(complex_t c) {
   complex_t tmp = {0.0, 0.0};
   int iteration = 0;
   float mu = 0.0;
+  double re, im;
 
   tmp.r = 0;
   tmp.i = 0;
-  
-  while (((tmp.r * tmp.r + tmp.i * tmp.i) <= 4) && iteration < ITERATION_THRESHOLD) {
-    double t = tmp.r * tmp.r - tmp.i * tmp.i + c.r;
-    tmp.i = 2 * tmp.r * tmp.i + c.i;
-    tmp.r = t;
-    iteration++;
+
+  for (iteration = 0; iteration < ITERATION_THRESHOLD; iteration++) {
+    re = tmp.r * tmp.r;
+    im = tmp.i * tmp.i;
+
+    if (re + im > 4)
+      goto normalize;
+
+    double z = re - im + c.r;
+    tmp.i = (tmp.r + tmp.r) * tmp.i + c.i;
+    tmp.r = z;
   }
 
+ normalize:
   if (iteration < ITERATION_THRESHOLD) {
-    mu = iteration + 1 - log(log(sqrt(tmp.r*tmp.r + tmp.i*tmp.i))/log(2.0)) / log(2.0);
+    mu = iteration + 1 - log(log(sqrt(re + im))/log(2.0)) / log(2.0);
     return mu/ITERATION_THRESHOLD;
   } else 
     return 1.0;
@@ -240,6 +247,9 @@ void draw_mandelbrot(graphics *g) {
   complex_t z;
   float  mu;
   SDL_Texture *texture;
+  uint64_t then;
+
+  then = SDL_GetTicks64();
 
   pixels = g->surface->pixels;
 
@@ -255,7 +265,7 @@ void draw_mandelbrot(graphics *g) {
       pixels[pos] = uf_select_color(g, mu);
     }
   }
-
+  printf("computations took %" PRIu64 "ms\n", SDL_GetTicks64() - then);
   texture = SDL_CreateTextureFromSurface(g->render, g->surface);
   SDL_RenderClear(g->render);
   SDL_RenderCopy(g->render, texture, NULL, NULL);
