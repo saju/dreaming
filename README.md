@@ -1,4 +1,4 @@
-A recursive Mandelbrot fractal generator for Macbooks in C using SDL for graphics. 
+A recursive Mandelbrot fractal generator for Apple Macbooks. 
 
 Currently:
 * Basic "zoom in" available by selecting a area using the touchpad. Zoom out via CMD-z (osx undo)
