@@ -8,7 +8,7 @@ CFLAGS += -ffast-math
 endif
 
 LFLAGS = -Wl,-sectcreate,__TEXT,__info_plist,dreaming.plist -L /opt/homebrew/Cellar/sdl2/2.28.2/lib -lsdl2
-SOURCES = mandelbrot.c color.c
+SOURCES = mandelbrot.c color.c worker.c
 OBJECTS=$(SOURCES:.c=.o )
 
 all:$(TARGET)

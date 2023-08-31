@@ -18,6 +18,12 @@ typedef struct {
   struct _rgb *colors;
 } palette_t;
 
+struct worker_ctx_s {
+  int worker;
+  void *args;
+};
+
+typedef struct worker_ctx_s worker_ctx_t;
 
 /*
  * Default palette found in Ultra Fractal.
@@ -39,4 +45,10 @@ struct _rgb *build_RGB_colormap_reverse();
  * RGB grayscale
  */
 palette_t *grayscale_RGB_palette();
+
+
+int init_workers();
+void worker_run(void *(*work)(void *), void *args);
+
+
 #endif

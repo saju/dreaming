@@ -92,6 +92,8 @@ typedef struct {
   zoom_t zoom;
 
   keyboard_t keyboard;
+
+  int worker_count;
   
   /* graphics machinery */
   SDL_Window *window;
@@ -172,6 +174,8 @@ void initialize_graphics(graphics *g) {
   /* XXX: free these */
   RGB_grayscale_palette = grayscale_RGB_palette();
   uf_palette = uf_rgb_palette();
+
+  g->worker_count = init_workers();
 }
 
 
@@ -233,44 +237,64 @@ float normalized_escape_time(complex_t c) {
 }
 
 
-void draw_mandelbrot(graphics *g) {
-  Uint32 *pixels;
-  int Px, Py, pos;
-  point_t P;
+void _compute(graphics *g, int y_start, int y_end) {
+  int x, y, pos;
+  point_t p;
   complex_t z;
-  float  mu;
-  SDL_Texture *texture;
-  uint64_t then;
+  float mu;
+  Uint32 *pixels = g->surface->pixels;
 
-  then = SDL_GetTicks64();
+#pragma clang loop vectorize(enable) 
+  for (y = y_start; y < y_end; y++) {
+    for (x = 0; x < g->screen_w; x++) {
+      p.x = x;
+      p.y = y;
 
-  pixels = g->surface->pixels;
-
-  printf("computation started for (%g, %g) X_scale(%g), Y_scale(%g)\n",
-	 g->top_left.r, g->top_left.i, g->X_scale, g->Y_scale);
-
-#pragma clang loop vectorize(enable)
-  for (Py = 0; Py < g->screen_h; Py++) {
-    for (Px = 0; Px < g->screen_w; Px++) {
-      P.x = Px;
-      P.y = Py;
-      
-      screen_to_complex_plane(g, P, &z);
+      screen_to_complex_plane(g, p, &z);
       mu = normalized_escape_time(z);
 
-      pos = SCREEN_TO_PIXEL(g, P);
+      pos = SCREEN_TO_PIXEL(g, p);
       pixels[pos] = uf_select_color(g, mu);
     }
   }
+}
+
+
+void *chunk_escape_time(void *arg) {
+  worker_ctx_t *ctx = (worker_ctx_t *)arg;
+  graphics *g = (graphics *)ctx->args;
+  int chunk = g->screen_h/g->worker_count;
+
+  _compute(g, ctx->worker * chunk, (ctx->worker + 1) * chunk);
+  return NULL;
+}
+
+/*
+ * break the screen up along the height (think rasters) and have each worker do one "raster".
+ */
+void draw_mandelbrot(graphics *g) {
+  uint64_t then;
+  SDL_Texture *texture;
+  int leftovers;
+
+  then = SDL_GetTicks64();
+
+  worker_run(chunk_escape_time, g);
+
+  leftovers = (int)g->screen_h % g->worker_count;
+  if (leftovers) {
+    _compute(g, g->screen_h - leftovers, g->screen_h);
+  }
+
   printf("computations took %" PRIu64 "ms\n", SDL_GetTicks64() - then);
-  
+
   texture = SDL_CreateTextureFromSurface(g->render, g->surface);
   SDL_RenderClear(g->render);
   SDL_RenderCopy(g->render, texture, NULL, NULL);
   SDL_DestroyTexture(texture);
   SDL_RenderPresent(g->render);
-  
- }
+}
+
 
 void zoom_selection_begin(graphics *g, int window_x, int window_y) {
   g->zoom.busy = true;
